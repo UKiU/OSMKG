@@ -2,10 +2,11 @@ import json
 import csv
 import os
 import random
+from lxml import etree
+import xmltodict
 import numpy as np
 import pandas as pd
 import datetime
-from link import *
 from config import *
 
 node_tag=[]
@@ -16,68 +17,131 @@ def check_path(path):
     if not os.path.exists(path):
         os.makedirs(path)
 
-#OSM数据结构中node处理
-def node_deal(path_node,path_way):
-    print("deal with node\n")
+def isInRegion_lat_lon(lat, lon, region_1):
+    '''
+    判断点[lat, lon] 是否在区域 region_1内
+    :param lat: 输入点的 纬度
+    :param lon: 输入点的 经度
+    :param region_1: region1是一个list，其格式为：[[40.695,-74.035],[ 40.694,-74.036]...] 其内层list中第一个元素代表纬度，第二个代表经度
+    :return: True则在所选区域内  False则不在
+    '''
+    count = 0
+    lat = float(lat)
+    lon = float(lon)
 
-    #读取有name的node
-    file_read=pd.read_json(path_node+ "node.json")
-    #读取cor
-    #读取标签
-    # 闭环way含name
-    file_write2 = open(path_node + 'NewYork_node2.json', mode='wb')
-    with open(path_node + 'node.json', mode='rb') as file_read:
-        count = 0
-        for line in file_read:
-            line = line.replace('\n'.encode(), ''.encode())
-            info = json.loads(line)
-            if 'tag' in info and type(info['tag']) is list and 'nd' in info and type(info['nd']) is list:
-                ff = 0
-                if info['nd'][0] == info['nd'][len(info['nd']) - 1]:
-                    for item in info['tag']:
-                        if 'name' in item.values():
-                            ff = 1
-                if ff == 1:
-                    elem = json.dumps(info)
-                    file_write2.write((elem + "\n").encode())
-                count += 1
-    file_write2.close()
-    df = pd.read_json(path_node + 'NewYork_node2.json', encoding='utf-8', lines=True)
-    df.to_csv(path_node + 'NewYork_node2.csv')
+    for i in range(len(region_1)):
+        # 如果是最后一个元素，那么必然是和第一个一样的，就啥也不干
+        if i+1 == len(region_1):
+            break
+        # 如果不是最后一个元素，那么需要和后一个元素一起判断给定点是否在区域内
+        la_1, lo_1= region_1[i]
+        la_2, lo_2= region_1[i + 1]
 
-    #清除k,v,并获取tag
-    file_write2 = open(path_node+'NewYork_node_clear.json', mode='wb')
-    with open(path_node+'node.json', mode='rb') as file_read:
-        count = 0
-        for line in file_read:
-            line = line.replace('\n'.encode(), ''.encode())
-            info = json.loads(line)
-            if 'tag' in info and type(info['tag']) is list:
-                for item in info['tag']:
-                    key= item['k']
-                    val= item['v']
-                    item.clear()
-                    item[key]=val
-            elem = json.dumps(info)
-            file_write2.write((elem + "\n").encode())
-    file_write2.close()
-    df = pd.read_json(path_node+'NewYork_node_clear.json', encoding='utf-8', lines=True)
-    df.to_csv(path_node+'NewYork_node_clear.csv')
+        la_1, lo_1, la_2, lo_2 = float(la_1), float(lo_1), float(la_2), float(lo_2)
+        # print((lo_1, la_1))
+        # # 以纬度确定位置，沿纬度向右作射线，看交点个数
+        if lat < min(la_1, la_2):
+            # print('点高度小于线段', (lo_1, la_1))
+            continue
+        if lat > max(la_1, la_2):
+            # print('点高度大于线段', (lo_1, la_1))
+            continue
+        # 如果和某一个共点那么直接返回true
+        if (lat, lon) == (la_1, lo_1) or (lat, lon) == (la_2, lo_2):
+            # print('在线段顶点上', (lo_1, la_1))
+            return True
+        # 如果和两点共线
+        if lat == la_1 == la_2:
+            # print('两点共线', (lo_1, la_1))
+            continue
 
-    #仅包含cor
-    file_write2 = open(path_node+'NewYork_node_cor.json', mode='wb')
-    with open(path_node+'node.json', mode='rb') as file_read:
-        count = 0
-        for line in file_read:
-            line = line.replace('\n'.encode(), ''.encode())
-            info = json.loads(line)
-            if 'tag' in info:
-                info.pop('tag')
-            elem = json.dumps(info)
-            file_write2.write((elem + "\n").encode())
-    file_write2.close()
-    df = pd.read_json(path_node+'NewYork_node_cor.json', encoding='utf-8', lines=True)
-    df.to_csv(path_node+'NewYork_node_cor.csv')
+        # 接下来只需考虑射线穿越的情况，该情况下的特殊情况是射线穿越顶点
+        # 求交点的经度
+        cross_lon = (lat - la_1) * (lo_2 - lo_1) / (la_2 - la_1 or 0.000000000000000000000001) + lo_1
+        # 无所谓在交点在点的左右 方向向上的边不包括其终止点  方向向下的边不包括其开始点
+        if lat == max(la_1, la_2):
+            continue
+        # 其他情况
+        elif cross_lon > lon:
+            count += 1
+
+    # print(count)
+    if count%2 == 0:
+        return False
+    return True
+
+def isInRegion_lon_lat(lon, lat, region_1):
+    '''
+    判断点[lon, lat] 是否在区域 region_1内
+    :param lon: 输入点的 经度
+    :param lat: 输入点的 纬度
+    :param region_1: region1是一个list，其格式为：[[-74.035, 40.695],[-74.036, 40.694]...] 其内层list中第一个元素代表经度，第二个代表纬度
+    :return: True则在所选区域内  False则不在
+    '''
+    count = 0
+    lat = float(lat)
+    lon = float(lon)
+
+    for i in range(len(region_1)):
+        # 如果是最后一个元素，那么必然是和第一个一样的，就啥也不干
+        if i+1 == len(region_1):
+            break
+        # 如果不是最后一个元素，那么需要和后一个元素一起判断给定点是否在区域内
+        lo_1, la_1 = region_1[i]
+        lo_2, la_2 = region_1[i + 1]
+
+        la_1, lo_1, la_2, lo_2 = float(la_1), float(lo_1), float(la_2), float(lo_2)
+        # print((lo_1, la_1))
+        # # 以纬度确定位置，沿纬度向右作射线，看交点个数
+        if lat < min(la_1, la_2):
+            # print('点高度小于线段', (lo_1, la_1))
+            continue
+        if lat > max(la_1, la_2):
+            # print('点高度大于线段', (lo_1, la_1))
+            continue
+        # 如果和某一个共点那么直接返回true
+        if (lat, lon) == (la_1, lo_1) or (lat, lon) == (la_2, lo_2):
+            # print('在线段顶点上', (lo_1, la_1))
+            return True
+        # 如果和两点共线
+        if lat == la_1 == la_2:
+            # print('两点共线', (lo_1, la_1))
+            continue
+
+        # 接下来只需考虑射线穿越的情况，该情况下的特殊情况是射线穿越顶点
+        # 求交点的经度
+        cross_lon = (lat - la_1) * (lo_2 - lo_1) / (la_2 - la_1 or 0.000000000000000000000001) + lo_1
+        # 无所谓在交点在点的左右 方向向上的边不包括其终止点  方向向下的边不包括其开始点
+        if lat == max(la_1, la_2):
+            continue
+        # 其他情况
+        elif cross_lon > lon:
+            count += 1
+
+    # print(count)
+    if count%2 == 0:
+        return False
+    return True
+
+#数据解析
+def iter_element(file_parsed, file_length, file_write, tag_type):
+    current_line = 0
+    try:
+        for event, element in file_parsed:
+            current_line += 1
+            if current_line % 100 == 0:
+                print(current_line / float(file_length))
+            elem_data = etree.tostring(element)
+            elem_dict = xmltodict.parse(elem_data, attr_prefix="", cdata_key="")
+            if element.tag == tag_type:
+                elem_jsonStr = json.dumps(elem_dict[tag_type])
+                file_write.write(elem_jsonStr + "\n")
+            # 每次读取之后进行一次清空
+            element.clear()
+            while element.getprevious() is not None:
+                del element.getparent()[0]
+    except:
+        pass
 
 #OSM数据结构中way处理
 def way_deal(path_node,path_way):

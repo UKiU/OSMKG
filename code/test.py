@@ -1,9 +1,16 @@
 import numpy as np
 import pandas as pd
-from link import *
 from config import *
 import math
-KG='D:\Program\osm\KG/'
+KG='..//data//'
+
+
+def match():
+    safegraph=pd.read_csv(KG+'raw//New York')
+    poi=pd.read_json(KG+'poi.json')
+    aoi=pd.read_json(KG+'aoi.json')
+    print(safegraph .head(),poi.head())
+
 
 def poi_save():
     poi=pd.read_json(KG+'poi.json')
@@ -111,7 +118,8 @@ def SafeGraph():
     SG_save.to_json(KG + 'SG_save.json')
 
 if __name__ == '__main__':
+    match()
     #poi_save()
     #node_only_cor()
-    aoi_save()
+    #aoi_save()
     #SafeGraph()
